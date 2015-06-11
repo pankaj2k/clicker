@@ -1,0 +1,293 @@
+package clicker.v4.report;
+
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.OutputStream;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.HashMap;
+
+import javax.servlet.ServletException;
+import javax.servlet.ServletOutputStream;
+import javax.servlet.http.HttpServlet;
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
+
+import org.apache.poi.hssf.usermodel.HSSFCell;
+import org.apache.poi.hssf.usermodel.HSSFCellStyle;
+import org.apache.poi.hssf.usermodel.HSSFFont;
+import org.apache.poi.hssf.usermodel.HSSFSheet;
+import org.apache.poi.hssf.usermodel.HSSFWorkbook;
+import org.apache.poi.ss.util.CellRangeAddress;
+
+import net.sf.jasperreports.engine.JasperCompileManager;
+import net.sf.jasperreports.engine.JasperExportManager;
+import net.sf.jasperreports.engine.JasperFillManager;
+import net.sf.jasperreports.engine.JasperPrint;
+import net.sf.jasperreports.engine.JasperReport;
+import clicker.v4.databaseconn.DatabaseConnection;
+
+/**
+ * Servlet implementation class DownloadXLS
+ */
+public class DownloadXLS extends HttpServlet {
+	private static final long serialVersionUID = 1L;
+	static JasperReport jasReport; // holds compiled jrxml file
+	static JasperPrint jasPrint; // contains report after result filling process
+	HSSFWorkbook wb = new HSSFWorkbook();		
+	HSSFCellStyle boldStyle;	
+    /**
+     * @see HttpServlet#HttpServlet()
+     */
+    public DownloadXLS() {
+        super();
+        createStyle();
+        // TODO Auto-generated constructor stub
+    }
+
+	/**
+	 * @see HttpServlet#doGet(HttpServletRequest request, HttpServletResponse response)
+	 */
+	protected void doGet(HttpServletRequest request, HttpServletResponse response) throws ServletException, IOException {
+		doProcess(request, response);
+	}
+
+	/**
+	 * @see HttpServlet#doPost(HttpServletRequest request, HttpServletResponse response)
+	 */
+	protected void doPost(HttpServletRequest request, HttpServletResponse response) throws ServletException, IOException {
+		doProcess(request, response);
+	}
+	
+	private void addNumber(HSSFSheet sheet, int column, int row, int integer)
+    {
+    	HSSFCell cell = sheet.getRow(row).createCell(column);
+    	cell.setCellValue(integer);
+    }
+    
+    private void addBoldNumber(HSSFSheet sheet, int column, int row, int integer) 
+    {
+    	HSSFCell cell = sheet.getRow(row).createCell(column);
+    	cell.setCellValue(integer);
+    	cell.setCellStyle(boldStyle);
+    }
+
+    private void addLabel(HSSFSheet sheet, int column, int row, String s)
+    {
+    	HSSFCell cell = sheet.getRow(row).createCell(column);
+    	cell.setCellValue(s);
+    }
+    
+    private void addBoldLabel(HSSFSheet sheet, int column, int row, String s)
+    {
+    	HSSFCell cell = sheet.getRow(row).createCell(column);
+    	cell.setCellValue(s);
+    	cell.setCellStyle(boldStyle);    	
+    }  
+    private void createRow(HSSFSheet sheet, int row)
+    {
+    	sheet.createRow(row);    	
+    }
+    private void setColumnSize(HSSFSheet sheet, int column,int size)
+    {
+    	sheet.setColumnWidth(column,size);
+    }  
+    
+    private void setRowSize(HSSFSheet sheet, int row, short size)
+    {
+    	sheet.getRow(row).setHeight(size);
+    }
+    
+    private void addFormula(HSSFSheet sheet, int column, int row, String formulaString)
+    {
+    	HSSFCell cell = sheet.getRow(row).createCell(column);
+    	cell.setCellFormula(formulaString);
+    	cell.setCellStyle(boldStyle);
+    }
+    
+    private void createStyle(){
+    	HSSFFont font = wb.createFont();
+    	font.setBoldweight(HSSFFont.BOLDWEIGHT_BOLD);
+    	boldStyle = wb.createCellStyle();
+    	boldStyle.setFont(font);
+    	boldStyle.setWrapText(true);
+    }
+	
+	protected void doProcess(HttpServletRequest request,
+			HttpServletResponse response) throws ServletException, IOException {
+		String reportname = request.getParameter("repname");
+		response.setContentType("application/vnd.ms-excel");
+		response.setHeader("Content-Disposition", "attachment; filename=" + reportname + ".xls");
+		DatabaseConnection dbcon = new DatabaseConnection();
+        Connection con = dbcon.createDatabaseConnection();       
+        try {
+			String Cid = request.getParameter("cid");
+			String reptype = request.getParameter("reptype");
+			String SID = "";
+			String QID = "";
+			String QTS = "";
+			String date = "", sn="";	
+			String studCount ="";
+			String path = getServletContext().getRealPath("/");
+			jasReport = JasperCompileManager.compileReport(path	+ "jasperreport/" + reportname + ".jrxml");
+			HashMap<String, Object> hmapParam = new HashMap<String, Object>();
+			if (reptype.equals("stud")) {
+				SID = request.getParameter("sid");
+				PreparedStatement pst = con.prepareStatement("select sq.StudentName, sq.StudentID, sq.CourseName, " +
+						"sq.CourseID, sq.DeptName, sq.QuizName, sq.TimeStamp, sum(sq.Credit) as Total_marks, " +
+						"sum(sq.NegativeMark * (NOT sq.correct) * sq.NegativeMarking * sq.isNoResponse) as NegativeMark, " +
+						"sum(sq.Credit * sq.correct) as Mark_Obtained, if(sum((sq.Credit * sq.correct)-(sq.NegativeMark * " +
+						"(NOT sq.correct) * sq.NegativeMarking * sq.isNoResponse)) / if(sum(sq.Credit)=0,1,sum(sq.Credit)) * " +
+						"100 < 0,0.00,sum((sq.Credit * sq.correct)-(sq.NegativeMark * (NOT sq.correct) * sq.NegativeMarking * sq.isNoResponse))" +
+						" / if(sum(sq.Credit)=0,1,sum(sq.Credit)) * 100) as Percentage from (select distinct q.CourseID, c.CourseName, d.DeptName," +
+						" q.QuizName, qr.TimeStamp, qr.NegativeMarking, qrq.StudentID, if(qrq.Response='Z' or qrq.Response='',0,1) as isNoResponse," +
+						" s.StudentName, qst.QuestionID, qst.Credit, qst.NegativeMark, count(*), if((count(*) = sum(o.OptionCorrectness) and count(*) " +
+						"in (SELECT count(*) FROM options oo where oo.QuestionID = qst.QuestionID and oo.OptionCorrectness = 1) ),1,0) as correct from " +
+						"quiz q, quizrecord qr, quizrecordquestion qrq, student s, options o, question qst, course c, department d where q.CourseID= ?" +
+						" and c.CourseID = q.CourseID and qr.QuizID = q.QuizID and qrq.QuizRecordID = qr.QuizRecordID and qrq.StudentID=s.StudentID and " +
+						"qrq.StudentID=? and o.OptionID = qrq.OptionID and qst.QuestionID = qrq.QuestionID and d.DeptID = c.DeptID group by s.StudentID," +
+						" qst.QuestionID, qrq.QRTimeStamp) sq group by sq.TimeStamp order by sq.TimeStamp desc");
+				pst.setString(1, Cid);
+				pst.setString(2, SID);
+				ResultSet rs = pst.executeQuery();
+				HSSFSheet sheet = wb.createSheet();
+				createRow(sheet,0);
+				setRowSize(sheet, 0, (short)400);
+				addBoldLabel(sheet,0,0,"Student Performance");
+				sheet.addMergedRegion(new CellRangeAddress(0,0,0,1));
+				addBoldLabel(sheet,3,0,"Clicker V4");
+				sheet.addMergedRegion(new CellRangeAddress(0,0,3,4));
+				SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy/MM/dd HH:mm:ss");
+				Date rdate = new Date();
+				addBoldLabel(sheet,5,0,dateFormat.format(rdate));
+				sheet.addMergedRegion(new CellRangeAddress(0,0,5,6));
+				int i=2;
+				if(rs.next()){
+					createRow(sheet,i);
+					addBoldLabel(sheet,0,i,"Department Name");
+					addLabel(sheet,1,i,rs.getString(5));
+					addBoldLabel(sheet,3,i,"Student ID");
+					addLabel(sheet,5,i,rs.getString(2));
+					i++;
+					createRow(sheet, i);
+					addBoldLabel(sheet,0,i,"Course Name");
+					addLabel(sheet,1,i,rs.getString(3));
+					addBoldLabel(sheet,3,i,"Student Name");
+					addLabel(sheet,5,i,rs.getString(1));
+					i++;i++;
+					createRow(sheet,i);
+					i++;
+					createRow(sheet,i);					
+					addBoldLabel(sheet,0,i-1,"Quiz Name");
+					addLabel(sheet,0,i,rs.getString(6));
+					setColumnSize(sheet, 0, 25*250);
+					addBoldLabel(sheet,1,i-1,"Time Stamp");
+					addLabel(sheet,1,i,rs.getString(7));
+					setColumnSize(sheet, 1, 20*250);
+					int mark = rs.getInt(10);
+					int neg = rs.getInt(9);
+					int outof = rs.getInt(8);
+					addBoldLabel(sheet,2,i-1,"Mark");
+					addNumber(sheet,2,i,mark);
+					addBoldLabel(sheet,3,i-1,"-ve Mark");
+					addNumber(sheet,3,i,neg);
+					addBoldLabel(sheet,4,i-1,"Obtain");
+					addFormula(sheet,4,i,"C"+(i+1)+"-D"+(i+1));
+					addBoldLabel(sheet,5,i-1,"Out of");
+					addNumber(sheet,5,i,outof);
+					addBoldLabel(sheet,6,i-1,"%");
+					addFormula(sheet,6,i,"E"+(i+1)+"*100/F"+(i+1));
+					sheet.addMergedRegion(new CellRangeAddress(2,2,3,4));
+					sheet.addMergedRegion(new CellRangeAddress(3,3,3,4));					
+					sheet.addMergedRegion(new CellRangeAddress(2,2,5,6));
+					sheet.addMergedRegion(new CellRangeAddress(3,3,5,6));
+					i++;
+				}
+				while(rs.next()){
+					createRow(sheet, i);
+					addLabel(sheet,0,i,rs.getString(6));
+					addLabel(sheet,1,i,rs.getString(7));
+					int mark = rs.getInt(10);
+					int neg = rs.getInt(9);
+					int outof = rs.getInt(8);
+					addNumber(sheet,2,i,mark);
+					addNumber(sheet,3,i,neg);
+					addFormula(sheet,4,i,"C"+(i+1)+"-D"+(i+1));
+					addNumber(sheet,5,i,outof);
+					addFormula(sheet,6,i,"E"+(i+1)+"*100/F"+(i+1));
+					//addBoldNumber(sheet,6,i,(mark-neg)*100/outof);
+					i++;					
+				}
+				// write it as an excel attachment
+				ByteArrayOutputStream outByteStream = new ByteArrayOutputStream();
+				wb.write(outByteStream);
+				byte [] outArray = outByteStream.toByteArray();
+				OutputStream outStream = response.getOutputStream();
+				outStream.write(outArray);
+				outStream.flush();
+				
+			} else if (reptype.equals("quiz")) {
+				QID = request.getParameter("qid");
+				QTS = request.getParameter("qts");
+				if (reportname.indexOf("Response") != -1 || reportname.indexOf("Result") != -1) {					
+					hmapParam.put("Cid", Cid);
+					hmapParam.put("QID", QID);
+					hmapParam.put("QTS", QTS);
+					if(reportname.indexOf("Response") != -1){
+						hmapParam.put("SUBREPORT_DIR", path + "jasperreport/");
+					}else{
+						double topScore = Double.parseDouble(request.getParameter("topScore"));
+						hmapParam.put("topScore", topScore);
+					}
+					studCount = request.getParameter("studCount");
+					hmapParam.put("studCount", studCount);			
+				} else if (reportname.indexOf("Detail") != -1) {
+					hmapParam.put("Cid", Cid);
+					hmapParam.put("QID", QID);
+				}
+			} else if (reptype.equals("course")) {
+				if (reportname.indexOf("Attendance") != -1) {
+					date = request.getParameter("date");
+					sn = request.getParameter("session");
+					String AttSummary = request.getParameter("AttSummary");
+					hmapParam.put("Cid", Cid);
+					hmapParam.put("date", date);
+					hmapParam.put("session", sn);
+					hmapParam.put("AttSummary", AttSummary);
+					hmapParam.put("SUBREPORT_DIR", path + "jasperreport/");					
+				} else if (reportname.equals("StudentList")) {
+					hmapParam.put("Cid", Cid);				
+					hmapParam.put("StudCount", request.getParameter("StudCount"));
+				}else if (reportname.equals("QuizSummary")) {
+					hmapParam.put("Cid", Cid);				
+					String NoofQuiz = request.getParameter("NoofQuiz");		
+					hmapParam.put("NoofQuiz", NoofQuiz);
+				}else if (reportname.equals("StudentQuery")) {
+					hmapParam.put("Cid", Cid);				
+					hmapParam.put("queryDate", request.getParameter("queryDate"));
+				}else {
+					hmapParam.put("Cid", Cid);
+				}
+			}else if (reptype.equals("instantquiz")) {
+					QID = request.getParameter("QID");
+					studCount = request.getParameter("studCount");
+					hmapParam.put("QID", QID);
+					hmapParam.put("studCount", studCount);
+					hmapParam.put("SUBREPORT_DIR", path + "jasperreport/");					
+			}
+			jasPrint = JasperFillManager.fillReport(jasReport, hmapParam, con);
+			System.out.println("Jasper Print : " + jasPrint);
+			ServletOutputStream sos = response.getOutputStream();
+			JasperExportManager.exportReportToPdfStream(jasPrint, sos);
+			sos.close();			
+		} catch (Exception ex) {
+			ex.printStackTrace();
+		}finally{
+			dbcon.closeLocalConnection(con);
+		}
+	}
+
+}
